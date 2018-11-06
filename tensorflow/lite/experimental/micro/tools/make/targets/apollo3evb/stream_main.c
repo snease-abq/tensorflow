@@ -19,9 +19,23 @@ limitations under the License.
 #include "am_util.h"
 
 //*****************************************************************************
-//
+// Parameters
+//*****************************************************************************
+
+#define FRAME_SIZE 320      // Capture one 320-sample (20-ms) frame at a time
+#define NUM_FRAMES 50       // Number of frames in 1 second
+
+//*****************************************************************************
+// GLOBALS
+//*****************************************************************************
+
+volatile int16_t g_numFramesCaptured = 0;
+volatile bool g_bPDMDataReady = false;
+int16_t captured_data[FRAME_SIZE*NUM_FRAMES]; // Location of 1-second data buffer
+
+
+//*****************************************************************************
 // The entry point for the application.
-//
 //*****************************************************************************
 extern int main(int argc, char**argv);
 
@@ -30,6 +44,29 @@ void DebugLogInt32(int32_t i) { am_util_stdio_printf( "%d", i); }
 void DebugLogUInt32(uint32_t i) { am_util_stdio_printf( "%d", i); }
 void DebugLogHex(uint32_t i) { am_util_stdio_printf( "0x%8x", i); }
 void DebugLogFloat(float i) { am_util_stdio_printf( "%f", i); }
+
+//*****************************************************************************
+// PDM configuration information.
+//*****************************************************************************
+void *PDMHandle;
+
+am_hal_pdm_config_t g_sPdmConfig =
+{
+	.eClkDivider = AM_HAL_PDM_MCLKDIV_1, // 1
+	.eLeftGain = AM_HAL_PDM_GAIN_P225DB, //AM_HAL_PDM_GAIN_P225DB,
+	.eRightGain = AM_HAL_PDM_GAIN_P225DB, //AM_HAL_PDM_GAIN_P225DB,
+	.ui32DecimationRate = 0x60, // OSR = 3072/16 = 192 = 2*SINCRATE --> SINC_RATE = 96 = 0x60
+	.bHighPassEnable = 1,
+	.ui32HighPassCutoff = 0xB,
+	.ePDMClkSpeed = AM_HAL_PDM_CLK_3MHZ, //768 kHz
+	.bInvertI2SBCLK = 0,
+	.ePDMClkSource = AM_HAL_PDM_INTERNAL_CLK,
+	.bPDMSampleDelay = 0,
+	.bDataPacking = 1,
+	.ePCMChannels = AM_HAL_PDM_CHANNEL_RIGHT,
+	.bLRSwap = 0,
+};
+
 
 //*****************************************************************************
 // BUTTON0 pin configuration settings.
@@ -42,7 +79,97 @@ const am_hal_gpio_pincfg_t g_deepsleep_button0 =
 };
 
 //*****************************************************************************
+// PDM initialization.
+//*****************************************************************************
+void pdm_init(void)
+{
+	//
+	// Initialize, power-up, and configure the PDM.
+	//
+	am_hal_pdm_initialize(0, &PDMHandle);
+	am_hal_pdm_power_control(PDMHandle, AM_HAL_PDM_POWER_ON, false);
+	am_hal_pdm_configure(PDMHandle, &g_sPdmConfig);
+	am_hal_pdm_enable(PDMHandle);
+
+	//
+	// Configure the necessary pins.
+	//
+	am_hal_gpio_pincfg_t sPinCfg = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+
+// ARPIT 181019
+	//sPinCfg.uFuncSel = AM_HAL_PIN_10_PDMCLK;
+	//am_hal_gpio_pinconfig(10, sPinCfg);
+	sPinCfg.uFuncSel = AM_HAL_PIN_12_PDMCLK;
+	am_hal_gpio_pinconfig(12, sPinCfg);
+
+	sPinCfg.uFuncSel = AM_HAL_PIN_11_PDMDATA;
+	am_hal_gpio_pinconfig(11, sPinCfg);
+
+	//am_hal_gpio_state_write(14, AM_HAL_GPIO_OUTPUT_CLEAR);
+	//am_hal_gpio_pinconfig(14, g_AM_HAL_GPIO_OUTPUT);
+
+	//
+	// Configure and enable PDM interrupts (set up to trigger on DMA
+	// completion).
+	//
+	am_hal_pdm_interrupt_enable(PDMHandle, (AM_HAL_PDM_INT_DERR
+	                                        | AM_HAL_PDM_INT_DCMP
+	                                        | AM_HAL_PDM_INT_UNDFL
+	                                        | AM_HAL_PDM_INT_OVF));
+
+#if AM_CMSIS_REGS
+	NVIC_EnableIRQ(PDM_IRQn);
+#else
+	am_hal_interrupt_enable(AM_HAL_INTERRUPT_PDM);
+#endif
+}
+
+//*****************************************************************************
+//
+// Start a transaction to get some number of bytes from the PDM interface.
+//
+//*****************************************************************************
+void pdm_data_get(void)
+{
+	//
+	// Configure DMA and target address.
+	//
+	am_hal_pdm_transfer_t sTransfer;
+	sTransfer.ui32TargetAddr = (uint32_t ) (captured_data + g_numFramesCaptured);
+	sTransfer.ui32TotalCount = 2*FRAME_SIZE; // Each sample is 2 bytes
+
+	//
+	// Start the data transfer.
+	//
+	am_hal_pdm_dma_start(PDMHandle, &sTransfer);
+}
+
+
+//*****************************************************************************
+//
+// PDM interrupt handler.
+//
+//*****************************************************************************
+void am_pdm_isr(void)
+{
+	uint32_t ui32Status;
+	//
+	// Read the interrupt status.
+	//
+	am_hal_pdm_interrupt_status_get(PDMHandle, &ui32Status, true);
+	am_hal_pdm_interrupt_clear(PDMHandle, ui32Status);
+
+	//
+	// Once our DMA transaction completes, send a flag to the main routine
+	//
+	if (ui32Status & AM_HAL_PDM_INT_DCMP)
+		g_bPDMDataReady = true;
+}
+
+
+//*****************************************************************************
 // GPIO ISR
+// Will enable the PDM, set number of frames transferred to 0, and turn on LED
 //*****************************************************************************
 void
 am_gpio_isr(void)
@@ -57,12 +184,15 @@ am_gpio_isr(void)
     //
     am_hal_gpio_interrupt_clear(AM_HAL_GPIO_BIT(AM_BSP_GPIO_BUTTON0));
 
+    // Start audio transfer
+	am_hal_pdm_fifo_flush(PDMHandle);
+	pdm_data_get();
+	am_hal_pdm_enable(PDMHandle);
+
     //
-    // Toggle LED 0.
+    // Turn on LED 0
     //
-#ifdef AM_BSP_NUM_LEDS
-    am_devices_led_toggle(am_bsp_psLEDs, 0);
-#endif
+    am_devices_led_on(am_bsp_psLEDs, 0);
 }
 
 int _main(void)
@@ -109,22 +239,20 @@ int _main(void)
     am_devices_led_array_init(am_bsp_psLEDs, AM_BSP_NUM_LEDS);
 
     //
-    // Turn the LEDs off, but initialize LED1 on so user will see something.
+    // Turn the LEDs off
     //
     for (int ix = 0; ix < AM_BSP_NUM_LEDS; ix++)
     {
         am_devices_led_off(am_bsp_psLEDs, ix);
     }
 
-    am_devices_led_on(am_bsp_psLEDs, 1);
+//    am_devices_led_on(am_bsp_psLEDs, 1);
 #endif // defined(AM_BSP_NUM_BUTTONS)  &&  defined(AM_BSP_NUM_LEDS)
 
 #if AM_CMSIS_REGS
     NVIC_EnableIRQ(GPIO_IRQn);
-    NVIC_EnableIRQ(RTC_IRQn);
 #else // AM_CMSIS_REGS
     am_hal_interrupt_enable(AM_HAL_INTERRUPT_GPIO);
-    am_hal_interrupt_enable(AM_HAL_INTERRUPT_RTC);
 #endif // AM_CMSIS_REGS
 
     //
@@ -132,6 +260,8 @@ int _main(void)
     //
     am_hal_interrupt_master_enable();
 
+	// Turn on PDM
+	pdm_init();
 
     //
     // Initialize the printf interface for UART output
@@ -142,67 +272,37 @@ int _main(void)
     // Print the banner.
     //
     am_util_stdio_terminal_clear();
-    am_util_stdio_printf("Hello World!\n\n");
-
-    //
-    // Print the device info.
-    //
-    am_util_id_device(&sIdDevice);
-    am_util_stdio_printf("Vendor Name: %s\n", sIdDevice.pui8VendorName);
-    am_util_stdio_printf("Device type: %s\n", sIdDevice.pui8DeviceName);
-
-
-    am_util_stdio_printf("Qualified: %s\n",
-                         sIdDevice.sMcuCtrlDevice.ui32Qualified ?
-                         "Yes" : "No");
-
-    am_util_stdio_printf("Device Info:\n"
-                         "\tPart number: 0x%08X\n"
-                         "\tChip ID0:    0x%08X\n"
-                         "\tChip ID1:    0x%08X\n"
-                         "\tRevision:    0x%08X (Rev%c%c)\n",
-                         sIdDevice.sMcuCtrlDevice.ui32ChipPN,
-                         sIdDevice.sMcuCtrlDevice.ui32ChipID0,
-                         sIdDevice.sMcuCtrlDevice.ui32ChipID1,
-                         sIdDevice.sMcuCtrlDevice.ui32ChipRev,
-                         sIdDevice.ui8ChipRevMaj, sIdDevice.ui8ChipRevMin );
-
-    //
-    // If not a multiple of 1024 bytes, append a plus sign to the KB.
-    //
-    ui32StrBuf = ( sIdDevice.sMcuCtrlDevice.ui32FlashSize % 1024 ) ? '+' : 0;
-    am_util_stdio_printf("\tFlash size:  %7d (%d KB%s)\n",
-                         sIdDevice.sMcuCtrlDevice.ui32FlashSize,
-                         sIdDevice.sMcuCtrlDevice.ui32FlashSize / 1024,
-                         &ui32StrBuf);
-
-    ui32StrBuf = ( sIdDevice.sMcuCtrlDevice.ui32SRAMSize % 1024 ) ? '+' : 0;
-    am_util_stdio_printf("\tSRAM size:   %7d (%d KB%s)\n\n",
-                         sIdDevice.sMcuCtrlDevice.ui32SRAMSize,
-                         sIdDevice.sMcuCtrlDevice.ui32SRAMSize / 1024,
-                         &ui32StrBuf);
-
-    //
-    // Print the compiler version.
-    //
-    am_util_stdio_printf("App Compiler:    %s\n", COMPILER_VERSION);
-#ifdef AM_PART_APOLLO3
-    am_util_stdio_printf("HAL Compiler:    %s\n", g_ui8HALcompiler);
-    am_util_stdio_printf("HAL SDK version: %d.%d.%d\n",
-                         g_ui32HALversion.s.Major,
-                         g_ui32HALversion.s.Minor,
-                         g_ui32HALversion.s.Revision);
-    am_util_stdio_printf("HAL compiled with %s-style registers\n",
-                         g_ui32HALversion.s.bAMREGS ? "AM_REG" : "CMSIS");
-
-    am_util_stdio_printf("&sIdDevice: 0x%x, &ui32StrBuf: 0x%x\n", &sIdDevice, &ui32StrBuf);
-    am_hal_security_info_t secInfo;
-    char sINFO[32];
-    uint32_t ui32Status;
-#endif // AM_PART_APOLLO3
+    am_util_stdio_printf("Starting streaming test\n\n");
 
     while(1)
     {
+
+        am_hal_interrupt_master_disable();
+
+        if (g_bPDMDataReady)
+        {
+            g_bPDMDataReady = false;
+            g_numFramesCaptured++;
+
+			if (g_numFramesCaptured < NUM_FRAMES) {
+                pdm_data_get(); // Start converting the next set of PCM samples.
+            } 
+
+            else 
+            {
+                g_numFramesCaptured = 0;
+                am_hal_pdm_disable(PDMHandle);
+                am_devices_led_off(am_bsp_psLEDs, 0);
+            }
+        }
+
+        //
+        // Go to Deep Sleep.
+        //
+        am_hal_sysctrl_sleep(AM_HAL_SYSCTRL_SLEEP_DEEP);
+
+        am_hal_interrupt_master_enable();
+
     }
 
     //main(0, NULL);
