@@ -21,6 +21,7 @@ else
     DEST_DIR="tensorflow/lite/experimental/micro/tools/make/targets/apollo3evb"
     AP3_DIR="../Apollo3-SDK-2018.08.13"
     cp "$AP3_DIR/boards/apollo3_evb/examples/hello_world/gcc/startup_gcc.c" "$DEST_DIR"
+    cp "$AP3_DIR/devices/am_devices_led.c" "$DEST_DIR"
     cp "$AP3_DIR/utils/am_util_delay.c" "$DEST_DIR"
     cp "$AP3_DIR/utils/am_util_faultisr.c" "$DEST_DIR"
     cp "$AP3_DIR/utils/am_util_id.c" "$DEST_DIR"
