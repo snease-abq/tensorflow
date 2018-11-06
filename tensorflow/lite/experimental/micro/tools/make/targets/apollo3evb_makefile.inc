@@ -83,11 +83,20 @@ ifeq ($(TARGET), apollo3evb)
   # of the DebugLog interfaces.
   MICROLITE_CC_SRCS += \
     $(MAKEFILE_DIR)/targets/apollo3evb/startup_gcc.c \
-    $(MAKEFILE_DIR)/targets/apollo3evb/_main.c \
     $(MAKEFILE_DIR)/targets/apollo3evb/am_util_delay.c \
     $(MAKEFILE_DIR)/targets/apollo3evb/am_util_faultisr.c \
     $(MAKEFILE_DIR)/targets/apollo3evb/am_util_id.c \
     $(MAKEFILE_DIR)/targets/apollo3evb/am_util_stdio.c
+
+  MICRO_SPEECH_TEST_SRCS += \
+    $(MAKEFILE_DIR)/targets/apollo3evb/_main.c
+
+  STREAM_MICRO_SPEECH_TEST_SRCS += \
+    $(MAKEFILE_DIR)/targets/apollo3evb/stream_main.c \
+    $(MAKEFILE_DIR)/targets/apollo3evb/am_devices_led.c
+
+  PREPROCESSOR_TEST_SRCS += \
+    $(MAKEFILE_DIR)/targets/apollo3evb/_main.c 
 
   TEST_SCRIPT := tensorflow/lite/experimental/log_test/test_apollo3evb_binary.sh
   # These are tests that don't currently work on the blue pill.

@@ -59,6 +59,13 @@ tensorflow/lite/experimental/micro/examples/micro_speech/tiny_conv_model_data.cc
 tensorflow/lite/experimental/micro/examples/micro_speech/no_features_data.cc \
 tensorflow/lite/experimental/micro/examples/micro_speech/yes_features_data.cc
 
+# Test binary for the streaming microcontroller speech model.
+STREAM_MICRO_SPEECH_TEST_SRCS := \
+tensorflow/lite/experimental/micro/examples/micro_speech/micro_speech_test.cc \
+tensorflow/lite/experimental/micro/examples/micro_speech/tiny_conv_model_data.cc \
+tensorflow/lite/experimental/micro/examples/micro_speech/no_features_data.cc \
+tensorflow/lite/experimental/micro/examples/micro_speech/yes_features_data.cc
+
 # Test binary for the microcontroller speech model.
 PREPROCESSOR_TEST_SRCS := \
 tensorflow/lite/experimental/micro/examples/micro_speech/preprocessor_test.cc \
@@ -91,6 +98,7 @@ include $(wildcard $(MAKEFILE_DIR)/targets/*_makefile.inc)
 
 ALL_SRCS := \
 	$(MICRO_SPEECH_TEST_SRCS) \
+	$(STREAM_MICRO_SPEECH_TEST_SRCS) \
 	$(PREPROCESSOR_TEST_SRCS) \
 	$(MICROLITE_CC_SRCS) \
 	$(MICROLITE_TEST_SRCS)
@@ -104,6 +112,7 @@ LIBDIR := $(GENDIR)lib/
 MICROLITE_LIB_PATH := $(LIBDIR)$(MICROLITE_LIB_NAME)
 
 MICRO_SPEECH_TEST_BINARY := $(BINDIR)micro_speech_test
+STREAM_MICRO_SPEECH_TEST_BINARY := $(BINDIR)stream_micro_speech_test
 PREPROCESSOR_TEST_BINARY := $(BINDIR)preprocessor_test
 
 CXX := $(CC_PREFIX)${TARGET_TOOLCHAIN_PREFIX}g++
@@ -112,6 +121,9 @@ AR := $(CC_PREFIX)${TARGET_TOOLCHAIN_PREFIX}ar
 
 MICRO_SPEECH_TEST_OBJS := $(addprefix $(OBJDIR), \
 $(patsubst %.cc,%.o,$(patsubst %.c,%.o,$(MICRO_SPEECH_TEST_SRCS))))
+
+STREAM_MICRO_SPEECH_TEST_OBJS := $(addprefix $(OBJDIR), \
+$(patsubst %.cc,%.o,$(patsubst %.c,%.o,$(STREAM_MICRO_SPEECH_TEST_SRCS))))
 
 PREPROCESSOR_TEST_OBJS := $(addprefix $(OBJDIR), \
 $(patsubst %.cc,%.o,$(patsubst %.c,%.o,$(PREPROCESSOR_TEST_SRCS))))
@@ -157,6 +169,20 @@ micro_speech_test_bin: $(MICRO_SPEECH_TEST_BINARY).bin
 
 test_micro_speech: $(MICRO_SPEECH_TEST_BINARY)
 	$(TEST_SCRIPT) $(MICRO_SPEECH_TEST_BINARY) '~~~ALL TESTS PASSED~~~'
+
+
+$(STREAM_MICRO_SPEECH_TEST_BINARY): $(STREAM_MICRO_SPEECH_TEST_OBJS) $(MICROLITE_LIB_PATH)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) \
+	-o $(STREAM_MICRO_SPEECH_TEST_BINARY) $(STREAM_MICRO_SPEECH_TEST_OBJS) \
+	$(LIBFLAGS) $(MICROLITE_LIB_PATH) $(LDFLAGS) $(MICROLITE_LIBS)
+
+stream_micro_speech_test: $(STREAM_MICRO_SPEECH_TEST_BINARY)
+stream_micro_speech_test_bin: $(STREAM_MICRO_SPEECH_TEST_BINARY).bin
+
+test_micro_stream_speech: $(STREAM_MICRO_SPEECH_TEST_BINARY)
+	$(TEST_SCRIPT) $(STREAM_MICRO_SPEECH_TEST_BINARY) '~~~ALL TESTS PASSED~~~'
+
 
 $(PREPROCESSOR_TEST_BINARY): $(PREPROCESSOR_TEST_OBJS) $(MICROLITE_LIB_PATH)
 	@mkdir -p $(dir $@)
