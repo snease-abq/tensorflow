@@ -20,6 +20,8 @@ limitations under the License.
 
 //*****************************************************************************
 // Parameters
+// 
+// Total number of bytes transferred = 320*50*2 = 32000
 //*****************************************************************************
 
 #define FRAME_SIZE 320      // Capture one 320-sample (20-ms) frame at a time
@@ -52,13 +54,13 @@ void *PDMHandle;
 
 am_hal_pdm_config_t g_sPdmConfig =
 {
-	.eClkDivider = AM_HAL_PDM_MCLKDIV_1, // 1
-	.eLeftGain = AM_HAL_PDM_GAIN_P225DB, //AM_HAL_PDM_GAIN_P225DB,
-	.eRightGain = AM_HAL_PDM_GAIN_P225DB, //AM_HAL_PDM_GAIN_P225DB,
-	.ui32DecimationRate = 0x60, // OSR = 3072/16 = 192 = 2*SINCRATE --> SINC_RATE = 96 = 0x60
-	.bHighPassEnable = 1,
+	.eClkDivider = AM_HAL_PDM_MCLKDIV_1,
+	.eLeftGain = AM_HAL_PDM_GAIN_P225DB, 
+	.eRightGain = AM_HAL_PDM_GAIN_P225DB,
+	.ui32DecimationRate = 48, // OSR = 1500/16 = 96 = 2*SINCRATE --> SINC_RATE = 48 
+	.bHighPassEnable = 0,
 	.ui32HighPassCutoff = 0xB,
-	.ePDMClkSpeed = AM_HAL_PDM_CLK_3MHZ, //768 kHz
+	.ePDMClkSpeed = AM_HAL_PDM_CLK_1_5MHZ,
 	.bInvertI2SBCLK = 0,
 	.ePDMClkSource = AM_HAL_PDM_INTERNAL_CLK,
 	.bPDMSampleDelay = 0,
@@ -135,7 +137,7 @@ void pdm_data_get(void)
 	// Configure DMA and target address.
 	//
 	am_hal_pdm_transfer_t sTransfer;
-	sTransfer.ui32TargetAddr = (uint32_t ) (captured_data + g_numFramesCaptured);
+	sTransfer.ui32TargetAddr = (uint32_t ) (&captured_data[FRAME_SIZE*g_numFramesCaptured]);
 	sTransfer.ui32TotalCount = 2*FRAME_SIZE; // Each sample is 2 bytes
 
 	//
@@ -291,7 +293,7 @@ int _main(void)
             else 
             {
                 g_numFramesCaptured = 0;
-                am_hal_pdm_disable(PDMHandle);
+                //am_hal_pdm_disable(PDMHandle);
                 am_devices_led_off(am_bsp_psLEDs, 0);
             }
         }
